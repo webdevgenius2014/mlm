@@ -1,0 +1,202 @@
+// Prisma Schema for MLM Website
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum TransactionType {
+  MATCHING_BONUS
+  DIRECT_REFERRAL
+  LEVEL_COMMISSION
+  WITHDRAWAL
+  PURCHASE
+  ADMIN_CREDIT
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum Position {
+  LEFT
+  RIGHT
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  firstName String
+  lastName  String
+  phone     String?
+
+  // MLM Specific
+  referralCode String  @unique
+  role         UserRole @default(USER)
+  status       UserStatus @default(ACTIVE)
+
+  // Financial
+  balance      Decimal @default(0) @db.Decimal(10, 2)
+  totalEarnings Decimal @default(0) @db.Decimal(10, 2)
+
+  // Relationships
+  uplineId     String?
+  upline       User?   @relation("Referrals", fields: [uplineId], references: [id])
+  downline     User[]  @relation("Referrals")
+
+  // Binary Tree
+  binaryTree   BinaryTree? @relation("UserBinaryTree")
+  leftChild    BinaryTree? @relation("LeftChild")
+  rightChild   BinaryTree? @relation("RightChild")
+
+  // Transactions
+  transactions Transaction[]
+  commissions  Commission[]
+
+  // Metadata
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lastLogin DateTime?
+
+  // Refresh tokens
+  refreshTokens RefreshToken[]
+
+  @@index([referralCode])
+  @@index([uplineId])
+  @@index([email])
+}
+
+model BinaryTree {
+  id        String   @id @default(uuid())
+
+  // User reference
+  userId    String   @unique
+  user      User     @relation("UserBinaryTree", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Parent in binary tree
+  parentId  String?
+  parent    User?    @relation("LeftChild", fields: [parentId], references: [id])
+
+  // Position under parent (LEFT or RIGHT)
+  position  Position?
+
+  // Children
+  leftChildId  String? @unique
+  leftChild    User?   @relation("LeftChild", fields: [leftChildId], references: [id])
+
+  rightChildId String? @unique
+  rightChild   User?   @relation("RightChild", fields: [rightChildId], references: [id])
+
+  // Leg counts (total people in left and right subtrees)
+  leftLegCount  Int @default(0)
+  rightLegCount Int @default(0)
+
+  // Matching bonus tracking
+  matchingBonusPaid Boolean @default(false)
+
+  // Metadata
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([parentId])
+  @@index([leftChildId])
+  @@index([rightChildId])
+}
+
+model Transaction {
+  id          String   @id @default(uuid())
+
+  // User reference
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Transaction details
+  type        TransactionType
+  status      TransactionStatus @default(PENDING)
+  amount      Decimal @db.Decimal(10, 2)
+
+  // Additional information
+  description String?
+  fromUserId  String?  // For referral tracking
+  metadata    Json?    // Store additional data
+
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  completedAt DateTime?
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Commission {
+  id          String   @id @default(uuid())
+
+  // User who earned the commission
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Commission details
+  type        TransactionType
+  amount      Decimal @db.Decimal(10, 2)
+
+  // Source tracking
+  fromUserId  String?  // User who triggered this commission
+  level       Int?     // Level in downline (1 = direct, 2 = second level, etc.)
+
+  // Payout status
+  paid        Boolean  @default(false)
+  paidAt      DateTime?
+
+  // Timestamps
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([fromUserId])
+  @@index([paid])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+// Configuration table for MLM settings
+model Config {
+  id    String @id @default(uuid())
+  key   String @unique
+  value String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+}
